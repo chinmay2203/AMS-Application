@@ -7,41 +7,34 @@ import webview
 import time
 import uuid
 import requests
-import ctypes  
+import ctypes
 
 
 try:
-    myappid = 'settribe ams' 
+    myappid = 'settribe.ams.app' 
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 except Exception as e:
     print("AppID Error:", e)
 
-# ================= CONFIG =================
+
 
 AMS_URL = "https://ams.settribe.com"
-SERVER_URL = "https://ams-application.onrender.com"
-
+SERVER_URL = "https://ams-application.onrender.com" 
 APP_NAME = "SETTribe" 
 
-# absolute icon path
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_ICON = os.path.join(BASE_DIR, "settribe.ico")
 
-# ================= GLOBAL STORAGE =================
 
-latest_notification = {
-    "title": "System Ready",
-    "message": "Notification Service Started"
-}
+notifications_queue = []
 
-# ================= DESKTOP NOTIFICATION =================
+# ================= DESKTOP NOTIFICATION (Local UI) =================
 
-def send_notification(title, message):
-    print("Notification:", title, message)
-
+def send_desktop_notification(title, message):
+    """स्थानिक मशीनवर नोटिफिकेशन दाखवण्यासाठी"""
+    print(f"Displaying: {title} - {message}")
     try:
         icon_path = APP_ICON if os.path.exists(APP_ICON) else None
-
         notification.notify(
             title=title,
             message=message,
@@ -50,20 +43,14 @@ def send_notification(title, message):
             timeout=10
         )
         return True
-
     except Exception as e:
         print("Notification Error:", e)
         return False
 
-
-# ================= APP =================
+# ================= FLASK APP =================
 
 app = Flask(__name__)
-app.secret_key = "secret123"
-
-UPLOAD_FOLDER = "uploads"
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
+app.secret_key = "settribe_secure_key_123"
 
 # ================= DATABASE =================
 
@@ -73,57 +60,45 @@ def get_db():
 def init_db():
     db = get_db()
     cur = db.cursor()
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS users(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT,
-    password TEXT,
-    token TEXT
-    )
-    """)
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS uploads(
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    filename TEXT,
-    uploaded_by TEXT
-    )
-    """)
+    cur.execute("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, password TEXT, token TEXT)")
+    cur.execute("CREATE TABLE IF NOT EXISTS uploads(id INTEGER PRIMARY KEY AUTOINCREMENT, filename TEXT, uploaded_by TEXT)")
     db.commit()
     db.close()
 
-# ================= API SEND =================
+# ================= API ENDPOINTS (For Broadcasting) =================
 
 @app.route('/api/send_notification', methods=['POST'])
 def api_send():
-    global latest_notification
+    """जेव्हा कोणी इव्हेंट करेल तेव्हा हे API कॉल होते"""
     data = request.get_json()
-
     if not data:
-        return jsonify({"status": "no data"})
+        return jsonify({"status": "no data"}), 400
 
-    title = data.get("title", "")
+    title = data.get("title", "Update")
     message = data.get("message", "")
 
     if title and message:
-        latest_notification["title"] = title
-        latest_notification["message"] = message
+        new_event = {
+            "id": str(uuid.uuid4()), 
+            "title": title,
+            "message": message,
+            "timestamp": time.time()
+        }
+        notifications_queue.append(new_event)
+        
+        if len(notifications_queue) > 10:
+            notifications_queue.pop(0)
+            
+        return jsonify({"status": "sent_to_queue", "id": new_event["id"]})
 
-        if send_notification(title, message):
-            return jsonify({"status": "sent"})
-        else:
-            return jsonify({"status": "failed"})
+    return jsonify({"status": "invalid_data"}), 400
 
-    return jsonify({"status": "invalid"})
-
-
-# ================= API GET =================
-
-@app.route('/api/get_notification')
+@app.route('/api/get_notifications')
 def api_get():
-    return jsonify(latest_notification)
+    """सर्व क्लायंट्स हे API दर ५ सेकंदाला चेक करतात"""
+    return jsonify(notifications_queue)
 
-
-# ================= LOGIN =================
+# ================= ROUTES =================
 
 @app.route('/', methods=['GET', 'POST'])
 def login():
@@ -137,35 +112,28 @@ def login():
         user = cur.fetchone()
 
         if user:
-            token = str(uuid.uuid4())
-            cur.execute("UPDATE users SET token=? WHERE username=?", (token, username))
-            db.commit()
+            session['user'] = username
             db.close()
 
-            session['user'] = username
-
-            send_notification("SETTribe Login", f"Hi {username}, Welcome")
-
+            
             try:
                 requests.post(
                     f"{SERVER_URL}/api/send_notification",
                     json={
-                        "title": "SETTribe Login",
-                        "message": f"Hi {username}, Welcome"
-                    }
+                        "title": "User Login",
+                        "message": f"{username} has joined the session."
+                    },
+                    timeout=5
                 )
-            except Exception as e:
-                print("API Error:", e)
+            except:
+                pass 
 
             return redirect('/home')
         else:
-            flash("Invalid Login")
+            flash("Invalid Credentials")
             db.close()
 
     return render_template("login.html")
-
-
-# ================= HOME =================
 
 @app.route('/home')
 def home():
@@ -173,56 +141,48 @@ def home():
         return redirect('/')
     return render_template("index.html")
 
+# ================= BACKGROUND LISTENER =================
 
-# ================= CLIENT LISTENER =================
-
-def notification_client():
-    last = ""
+def notification_listener():
+    """बॅकग्राउंडमध्ये सर्व्हरकडून नवीन नोटिफिकेशन आहेत का ते तपासते"""
+    processed_ids = set() 
+    
     while True:
         try:
-            r = requests.get(f"{SERVER_URL}/api/get_notification")
-            data = r.json()
-            title = data.get("title", "")
-            message = data.get("message", "")
-
-            if title and message:
-                msg = f"{title}|{message}"
-                if msg != last:
-                    last = msg
-                    send_notification(title, message)
+            
+            response = requests.get(f"{SERVER_URL}/api/get_notifications", timeout=5)
+            if response.status_code == 200:
+                server_notes = response.json()
+                
+                for note in server_notes:
+                    n_id = note.get("id")
+                    if n_id not in processed_ids:
+                       
+                        send_desktop_notification(note['title'], note['message'])
+                        processed_ids.add(n_id)
+                        
         except Exception as e:
-            print("Listener Error:", e)
+            print("Sync Error (Retrying...):", e)
         
-        time.sleep(3)
+        time.sleep(5)
 
-
-# ================= RUN FLASK =================
+# ================= EXECUTION =================
 
 def run_flask():
-    app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
-
-
-# ================= MAIN =================
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 if __name__ == "__main__":
     init_db()
 
-    t1 = threading.Thread(target=run_flask)
-    t1.daemon = True
+    t1 = threading.Thread(target=run_flask, daemon=True)
     t1.start()
 
-    t2 = threading.Thread(target=notification_client)
-    t2.daemon = True
+    t2 = threading.Thread(target=notification_listener, daemon=True)
     t2.start()
 
     time.sleep(2)
+    send_desktop_notification("SETTribe", "System Online & Synced")
 
-    send_notification("SETTribe", "Application Started")
-
-    webview.create_window(
-        "SETTribe AMS Portal",
-        AMS_URL,
-        width=1200,
-        height=800
-    )
+    webview.create_window("SETTribe AMS Portal", AMS_URL, width=1200, height=800)
     webview.start(gui="edgechromium")
