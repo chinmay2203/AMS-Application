@@ -8,7 +8,7 @@ import time
 import uuid
 import requests
 import ctypes
-import socket 
+import socket
 
 
 MY_MACHINE_NAME = socket.gethostname()
@@ -27,7 +27,7 @@ APP_NAME = "SETTribe"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_ICON = os.path.join(BASE_DIR, "settribe.ico")
 
-
+# सर्व्हर स्टोअरेज
 notifications_queue = []
 
 # ================= DESKTOP NOTIFICATION =================
