@@ -8,7 +8,10 @@ import time
 import uuid
 import requests
 import ctypes
+import socket 
 
+
+MY_MACHINE_NAME = socket.gethostname()
 
 try:
     myappid = 'settribe.ams.app' 
@@ -16,8 +19,7 @@ try:
 except Exception as e:
     print("AppID Error:", e)
 
-
-
+# ================= CONFIG =================
 AMS_URL = "https://ams.settribe.com"
 SERVER_URL = "https://ams-application.onrender.com" 
 APP_NAME = "SETTribe" 
@@ -28,10 +30,9 @@ APP_ICON = os.path.join(BASE_DIR, "settribe.ico")
 
 notifications_queue = []
 
-# ================= DESKTOP NOTIFICATION (Local UI) =================
+# ================= DESKTOP NOTIFICATION =================
 
 def send_desktop_notification(title, message):
-    """स्थानिक मशीनवर नोटिफिकेशन दाखवण्यासाठी"""
     print(f"Displaying: {title} - {message}")
     try:
         icon_path = APP_ICON if os.path.exists(APP_ICON) else None
@@ -52,8 +53,6 @@ def send_desktop_notification(title, message):
 app = Flask(__name__)
 app.secret_key = "settribe_secure_key_123"
 
-# ================= DATABASE =================
-
 def get_db():
     return sqlite3.connect("app.db")
 
@@ -61,42 +60,48 @@ def init_db():
     db = get_db()
     cur = db.cursor()
     cur.execute("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, password TEXT, token TEXT)")
-    cur.execute("CREATE TABLE IF NOT EXISTS uploads(id INTEGER PRIMARY KEY AUTOINCREMENT, filename TEXT, uploaded_by TEXT)")
     db.commit()
     db.close()
 
-# ================= API ENDPOINTS (For Broadcasting) =================
+# ================= API ENDPOINTS =================
 
 @app.route('/api/send_notification', methods=['POST'])
 def api_send():
-    """जेव्हा कोणी इव्हेंट करेल तेव्हा हे API कॉल होते"""
     data = request.get_json()
     if not data:
         return jsonify({"status": "no data"}), 400
 
+    target = data.get("target_machine") 
     title = data.get("title", "Update")
     message = data.get("message", "")
 
-    if title and message:
+    if target and title and message:
         new_event = {
             "id": str(uuid.uuid4()), 
+            "target_machine": target, 
             "title": title,
             "message": message,
             "timestamp": time.time()
         }
         notifications_queue.append(new_event)
         
-        if len(notifications_queue) > 10:
+        
+        if len(notifications_queue) > 50:
             notifications_queue.pop(0)
             
-        return jsonify({"status": "sent_to_queue", "id": new_event["id"]})
+        return jsonify({"status": "queued"})
 
     return jsonify({"status": "invalid_data"}), 400
 
 @app.route('/api/get_notifications')
 def api_get():
-    """सर्व क्लायंट्स हे API दर ५ सेकंदाला चेक करतात"""
-    return jsonify(notifications_queue)
+ 
+    machine_id = request.args.get('machine_id')
+    
+
+    my_notes = [n for n in notifications_queue if n['target_machine'] == machine_id]
+    
+    return jsonify(my_notes)
 
 # ================= ROUTES =================
 
@@ -120,8 +125,9 @@ def login():
                 requests.post(
                     f"{SERVER_URL}/api/send_notification",
                     json={
-                        "title": "User Login",
-                        "message": f"{username} has joined the session."
+                        "target_machine": MY_MACHINE_NAME, 
+                        "title": "Login Successful",
+                        "message": f"Hi {username}, welcome to SETTribe!"
                     },
                     timeout=5
                 )
@@ -144,25 +150,26 @@ def home():
 # ================= BACKGROUND LISTENER =================
 
 def notification_listener():
-    """बॅकग्राउंडमध्ये सर्व्हरकडून नवीन नोटिफिकेशन आहेत का ते तपासते"""
     processed_ids = set() 
     
     while True:
         try:
             
-            response = requests.get(f"{SERVER_URL}/api/get_notifications", timeout=5)
+            response = requests.get(
+                f"{SERVER_URL}/api/get_notifications?machine_id={MY_MACHINE_NAME}", 
+                timeout=5
+            )
             if response.status_code == 200:
                 server_notes = response.json()
                 
                 for note in server_notes:
                     n_id = note.get("id")
                     if n_id not in processed_ids:
-                       
                         send_desktop_notification(note['title'], note['message'])
                         processed_ids.add(n_id)
                         
         except Exception as e:
-            print("Sync Error (Retrying...):", e)
+            print("Sync Error:", e)
         
         time.sleep(5)
 
@@ -182,7 +189,7 @@ if __name__ == "__main__":
     t2.start()
 
     time.sleep(2)
-    send_desktop_notification("SETTribe", "System Online & Synced")
+    send_desktop_notification("SETTribe", f"System Ready on {MY_MACHINE_NAME}")
 
     webview.create_window("SETTribe AMS Portal", AMS_URL, width=1200, height=800)
     webview.start(gui="edgechromium")
