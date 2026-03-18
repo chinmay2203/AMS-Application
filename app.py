@@ -19,7 +19,7 @@ except Exception as e:
 # ================= CONFIG =================
 
 AMS_URL = "https://ams.settribe.com"
-SERVER_URL = "http://127.0.0.1:5000"
+SERVER_URL = "https://ams-application.onrender.com"
 
 APP_NAME = "SETTribe" 
 
