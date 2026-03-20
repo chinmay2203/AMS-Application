@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, redirect, session, flash
 from plyer import notification
+import ctypes
 import sqlite3
 import os
 import threading
@@ -7,6 +8,14 @@ import webview
 import time
 import uuid
 import requests
+
+# ================= WINDOWS APP NAME FIX =================
+
+try:
+    myappid = 'settribe.ams.app'  # unique app id
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+except Exception as e:
+    print("AppID Error:", e)
 
 # ================= CONFIG =================
 
@@ -86,9 +95,9 @@ def login():
         if user:
             session['user'] = username
 
-            # 🔥 send notification to THIS device only
+            # 🔥 Send notification to THIS device
             try:
-                requests.post(
+                response = requests.post(
                     f"{SERVER_URL}/api/send_notification",
                     json={
                         "target_machine": MY_DEVICE_ID,
@@ -97,6 +106,8 @@ def login():
                     },
                     timeout=5
                 )
+                print("Server Response:", response.status_code)
+
             except Exception as e:
                 print("Server Error:", e)
 
@@ -120,7 +131,8 @@ def notification_listener():
     while True:
         try:
             res = requests.get(
-                f"{SERVER_URL}/api/get_notifications?machine_id={MY_DEVICE_ID}",
+                f"{SERVER_URL}/api/get_notifications",
+                params={"machine_id": MY_DEVICE_ID},
                 timeout=5
             )
 
@@ -149,7 +161,7 @@ if __name__ == "__main__":
     threading.Thread(target=notification_listener, daemon=True).start()
 
     time.sleep(2)
-    send_desktop_notification("SETTribe", "System Ready")
+    send_desktop_notification("SETTribe", f"System Ready\nDevice: {MY_DEVICE_ID[:8]}")
 
-    webview.create_window("SETTribe", AMS_URL)
+    webview.create_window("SETTribe AMS Portal", AMS_URL, width=1200, height=800)
     webview.start()
