@@ -2,13 +2,14 @@ from flask import Flask, request, jsonify
 import sqlite3
 import uuid
 import time
+import os
 
 app = Flask(__name__)
 
 # ================= DB =================
 
 def get_db():
-    return sqlite3.connect("notifications.db")
+    return sqlite3.connect("notifications.db", check_same_thread=False)
 
 def init_db():
     db = get_db()
@@ -25,68 +26,96 @@ def init_db():
     db.commit()
     db.close()
 
+# Auto run DB setup (IMPORTANT for deployment)
+@app.before_first_request
+def setup():
+    init_db()
+
 # ================= API =================
 
 @app.route("/")
 def home():
     return "Server Running ✅"
 
+# ---------------- SEND ----------------
+
 @app.route('/api/send_notification', methods=['POST'])
 def send_notification():
-    data = request.get_json()
+    try:
+        data = request.get_json()
 
-    target = data.get("target_machine")
-    title = data.get("title")
-    message = data.get("message")
+        # ✅ JSON check
+        if not data:
+            return jsonify({"error": "Invalid JSON"}), 400
 
-    if not target or not title:
-        return jsonify({"status": "invalid"}), 400
+        target = data.get("target_machine")
+        title = data.get("title")
+        message = data.get("message")
 
-    db = get_db()
-    cur = db.cursor()
+        # ✅ validation
+        if not target or not title:
+            return jsonify({"status": "invalid"}), 400
 
-    cur.execute("""
-        INSERT INTO notifications VALUES (?, ?, ?, ?, ?)
-    """, (
-        str(uuid.uuid4()),
-        target,
-        title,
-        message,
-        time.time()
-    ))
+        db = get_db()
+        cur = db.cursor()
 
-    db.commit()
-    db.close()
+        cur.execute("""
+            INSERT INTO notifications VALUES (?, ?, ?, ?, ?)
+        """, (
+            str(uuid.uuid4()),
+            target,
+            title,
+            message,
+            time.time()
+        ))
 
-    return jsonify({"status": "stored"})
+        db.commit()
+        db.close()
+
+        return jsonify({"status": "stored"})
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------- GET ----------------
 
 @app.route('/api/get_notifications')
 def get_notifications():
-    machine_id = request.args.get("machine_id")
+    try:
+        machine_id = request.args.get("machine_id")
 
-    db = get_db()
-    cur = db.cursor()
+        # ✅ validation
+        if not machine_id:
+            return jsonify({"error": "machine_id required"}), 400
 
-    cur.execute("""
-        SELECT id, title, message FROM notifications
-        WHERE target_machine = ?
-    """, (machine_id,))
+        db = get_db()
+        cur = db.cursor()
 
-    rows = cur.fetchall()
-    db.close()
+        cur.execute("""
+            SELECT id, title, message FROM notifications
+            WHERE target_machine = ?
+        """, (machine_id,))
 
-    data = []
-    for r in rows:
-        data.append({
-            "id": r[0],
-            "title": r[1],
-            "message": r[2]
-        })
+        rows = cur.fetchall()
+        db.close()
 
-    return jsonify(data)
+        data = []
+        for r in rows:
+            data.append({
+                "id": r[0],
+                "title": r[1],
+                "message": r[2]
+            })
+
+        return jsonify(data)
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 # ================= RUN =================
 
 if __name__ == "__main__":
     init_db()
-    app.run(host="0.0.0.0", port=10000)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))

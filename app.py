@@ -12,7 +12,7 @@ import requests
 # ================= WINDOWS APP NAME FIX =================
 
 try:
-    myappid = 'settribe.ams.app'  # unique app id
+    myappid = 'settribe.ams.app'
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 except Exception as e:
     print("AppID Error:", e)
@@ -31,14 +31,18 @@ APP_ICON = os.path.join(BASE_DIR, "settribe.ico")
 DEVICE_FILE = "device_id.txt"
 
 def get_device_id():
-    if os.path.exists(DEVICE_FILE):
-        with open(DEVICE_FILE, "r") as f:
-            return f.read().strip()
-    else:
-        new_id = str(uuid.uuid4())
-        with open(DEVICE_FILE, "w") as f:
-            f.write(new_id)
-        return new_id
+    try:
+        if os.path.exists(DEVICE_FILE):
+            with open(DEVICE_FILE, "r") as f:
+                return f.read().strip()
+        else:
+            new_id = str(uuid.uuid4())
+            with open(DEVICE_FILE, "w") as f:
+                f.write(new_id)
+            return new_id
+    except Exception as e:
+        print("Device ID Error:", e)
+        return str(uuid.uuid4())
 
 MY_DEVICE_ID = get_device_id()
 
@@ -62,7 +66,7 @@ app = Flask(__name__)
 app.secret_key = "secret123"
 
 def get_db():
-    return sqlite3.connect("app.db")
+    return sqlite3.connect("app.db", check_same_thread=False)
 
 def init_db():
     db = get_db()
@@ -81,41 +85,46 @@ def init_db():
 
 @app.route('/', methods=['GET', 'POST'])
 def login():
-    if request.method == "POST":
-        username = request.form['username']
-        password = request.form['password']
+    try:
+        if request.method == "POST":
+            username = request.form.get('username')
+            password = request.form.get('password')
 
-        db = get_db()
-        cur = db.cursor()
+            db = get_db()
+            cur = db.cursor()
 
-        cur.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))
-        user = cur.fetchone()
-        db.close()
+            cur.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))
+            user = cur.fetchone()
+            db.close()
 
-        if user:
-            session['user'] = username
+            if user:
+                session['user'] = username
 
-            # 🔥 Send notification to THIS device
-            try:
-                response = requests.post(
-                    f"{SERVER_URL}/api/send_notification",
-                    json={
-                        "target_machine": MY_DEVICE_ID,
-                        "title": "Login Successful",
-                        "message": f"Hi {username}, welcome!"
-                    },
-                    timeout=5
-                )
-                print("Server Response:", response.status_code)
+                # 🔥 Send notification
+                try:
+                    response = requests.post(
+                        f"{SERVER_URL}/api/send_notification",
+                        json={
+                            "target_machine": MY_DEVICE_ID,
+                            "title": "Login Successful",
+                            "message": f"Hi {username}, welcome!"
+                        },
+                        timeout=5
+                    )
+                    print("Server Response:", response.status_code)
 
-            except Exception as e:
-                print("Server Error:", e)
+                except Exception as e:
+                    print("Server Error:", e)
 
-            return redirect('/home')
-        else:
-            flash("Invalid Credentials")
+                return redirect('/home')
+            else:
+                flash("Invalid Credentials")
 
-    return render_template("login.html")
+        return render_template("login.html")
+
+    except Exception as e:
+        return str(e)
+
 
 @app.route('/home')
 def home():
@@ -137,12 +146,19 @@ def notification_listener():
             )
 
             if res.status_code == 200:
-                notes = res.json()
+                try:
+                    notes = res.json()
+                except:
+                    print("Invalid JSON from server")
+                    notes = []
 
                 for n in notes:
-                    if n["id"] not in shown_ids:
-                        send_desktop_notification(n["title"], n["message"])
-                        shown_ids.add(n["id"])
+                    if n.get("id") not in shown_ids:
+                        send_desktop_notification(
+                            n.get("title", "No Title"),
+                            n.get("message", "")
+                        )
+                        shown_ids.add(n.get("id"))
 
         except Exception as e:
             print("Sync Error:", e)
@@ -161,7 +177,17 @@ if __name__ == "__main__":
     threading.Thread(target=notification_listener, daemon=True).start()
 
     time.sleep(2)
-    send_desktop_notification("SETTribe", f"System Ready\nDevice: {MY_DEVICE_ID[:8]}")
 
-    webview.create_window("SETTribe AMS Portal", AMS_URL, width=1200, height=800)
+    send_desktop_notification(
+        "SETTribe",
+        f"System Ready\nDevice: {MY_DEVICE_ID[:8]}"
+    )
+
+    webview.create_window(
+        "SETTribe AMS Portal",
+        AMS_URL,
+        width=1200,
+        height=800
+    )
+
     webview.start()
