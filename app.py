@@ -1,6 +1,5 @@
-from flask import Flask, render_template, request, redirect, session, flash
+from flask import Flask, render_template, request, redirect, session, flash, jsonify
 from plyer import notification
-import ctypes
 import sqlite3
 import os
 import threading
@@ -8,123 +7,139 @@ import webview
 import time
 import uuid
 import requests
+import ctypes
+import socket
 
-# ================= WINDOWS APP NAME FIX =================
+
+MY_MACHINE_NAME = socket.gethostname()
 
 try:
-    myappid = 'settribe.ams.app'
+    myappid = 'settribe.ams.app' 
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 except Exception as e:
     print("AppID Error:", e)
 
 # ================= CONFIG =================
-
-SERVER_URL = "https://ams-application.onrender.com"
 AMS_URL = "https://ams.settribe.com"
-APP_NAME = "SETTribe"
+SERVER_URL = "https://ams-application.onrender.com" 
+APP_NAME = "SETTribe" 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_ICON = os.path.join(BASE_DIR, "settribe.ico")
 
-# ================= DEVICE ID =================
+# सर्व्हर स्टोअरेज
+notifications_queue = []
 
-DEVICE_FILE = "device_id.txt"
-
-def get_device_id():
-    try:
-        if os.path.exists(DEVICE_FILE):
-            with open(DEVICE_FILE, "r") as f:
-                return f.read().strip()
-        else:
-            new_id = str(uuid.uuid4())
-            with open(DEVICE_FILE, "w") as f:
-                f.write(new_id)
-            return new_id
-    except Exception as e:
-        print("Device ID Error:", e)
-        return str(uuid.uuid4())
-
-MY_DEVICE_ID = get_device_id()
-
-# ================= NOTIFICATION =================
+# ================= DESKTOP NOTIFICATION =================
 
 def send_desktop_notification(title, message):
+    print(f"Displaying: {title} - {message}")
     try:
+        icon_path = APP_ICON if os.path.exists(APP_ICON) else None
         notification.notify(
             title=title,
             message=message,
-            app_name=APP_NAME,
-            app_icon=APP_ICON if os.path.exists(APP_ICON) else None,
+            app_name=APP_NAME,  
+            app_icon=icon_path,
             timeout=10
         )
+        return True
     except Exception as e:
         print("Notification Error:", e)
+        return False
 
-# ================= FLASK =================
+# ================= FLASK APP =================
 
 app = Flask(__name__)
-app.secret_key = "secret123"
+app.secret_key = "settribe_secure_key_123"
 
 def get_db():
-    return sqlite3.connect("app.db", check_same_thread=False)
+    return sqlite3.connect("app.db")
 
 def init_db():
     db = get_db()
     cur = db.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS users(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT,
-            password TEXT
-        )
-    """)
+    cur.execute("CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT, password TEXT, token TEXT)")
     db.commit()
     db.close()
+
+# ================= API ENDPOINTS =================
+
+@app.route('/api/send_notification', methods=['POST'])
+def api_send():
+    data = request.get_json()
+    if not data:
+        return jsonify({"status": "no data"}), 400
+
+    target = data.get("target_machine") 
+    title = data.get("title", "Update")
+    message = data.get("message", "")
+
+    if target and title and message:
+        new_event = {
+            "id": str(uuid.uuid4()), 
+            "target_machine": target, 
+            "title": title,
+            "message": message,
+            "timestamp": time.time()
+        }
+        notifications_queue.append(new_event)
+        
+        
+        if len(notifications_queue) > 50:
+            notifications_queue.pop(0)
+            
+        return jsonify({"status": "queued"})
+
+    return jsonify({"status": "invalid_data"}), 400
+
+@app.route('/api/get_notifications')
+def api_get():
+ 
+    machine_id = request.args.get('machine_id')
+    
+
+    my_notes = [n for n in notifications_queue if n['target_machine'] == machine_id]
+    
+    return jsonify(my_notes)
 
 # ================= ROUTES =================
 
 @app.route('/', methods=['GET', 'POST'])
 def login():
-    try:
-        if request.method == "POST":
-            username = request.form.get('username')
-            password = request.form.get('password')
+    if request.method == "POST":
+        username = request.form['username']
+        password = request.form['password']
 
-            db = get_db()
-            cur = db.cursor()
+        db = get_db()
+        cur = db.cursor()
+        cur.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))
+        user = cur.fetchone()
 
-            cur.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))
-            user = cur.fetchone()
+        if user:
+            session['user'] = username
             db.close()
 
-            if user:
-                session['user'] = username
+            
+            try:
+                requests.post(
+                    f"{SERVER_URL}/api/send_notification",
+                    json={
+                        "target_machine": MY_MACHINE_NAME, 
+                        "title": "Login Successful",
+                        "message": f"Hi {username}, welcome to SETTribe!"
+                    },
+                    timeout=5
+                )
+            except:
+                pass 
 
-                # 🔥 Send notification
-                try:
-                    response = requests.post(
-                        f"{SERVER_URL}/api/send_notification",
-                        json={
-                            "target_machine": MY_DEVICE_ID,
-                            "title": "Login Successful",
-                            "message": f"Hi {username}, welcome!"
-                        },
-                        timeout=5
-                    )
-                    print("Server Response:", response.status_code)
+            return redirect('/home')
+        else:
+            flash("Invalid Credentials")
+            db.close()
 
-                except Exception as e:
-                    print("Server Error:", e)
-
-                return redirect('/home')
-            else:
-                flash("Invalid Credentials")
-
-        return render_template("login.html")
-
-    except Exception as e:
-        return str(e)
-
+    return render_template("login.html")
 
 @app.route('/home')
 def home():
@@ -132,62 +147,49 @@ def home():
         return redirect('/')
     return render_template("index.html")
 
-# ================= LISTENER =================
+# ================= BACKGROUND LISTENER =================
 
 def notification_listener():
-    shown_ids = set()
-
+    processed_ids = set() 
+    
     while True:
         try:
-            res = requests.get(
-                f"{SERVER_URL}/api/get_notifications",
-                params={"machine_id": MY_DEVICE_ID},
+            
+            response = requests.get(
+                f"{SERVER_URL}/api/get_notifications?machine_id={MY_MACHINE_NAME}", 
                 timeout=5
             )
-
-            if res.status_code == 200:
-                try:
-                    notes = res.json()
-                except:
-                    print("Invalid JSON from server")
-                    notes = []
-
-                for n in notes:
-                    if n.get("id") not in shown_ids:
-                        send_desktop_notification(
-                            n.get("title", "No Title"),
-                            n.get("message", "")
-                        )
-                        shown_ids.add(n.get("id"))
-
+            if response.status_code == 200:
+                server_notes = response.json()
+                
+                for note in server_notes:
+                    n_id = note.get("id")
+                    if n_id not in processed_ids:
+                        send_desktop_notification(note['title'], note['message'])
+                        processed_ids.add(n_id)
+                        
         except Exception as e:
             print("Sync Error:", e)
-
+        
         time.sleep(5)
 
-# ================= RUN =================
+# ================= EXECUTION =================
 
 def run_flask():
-    app.run(port=5000, debug=False, use_reloader=False)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 if __name__ == "__main__":
     init_db()
 
-    threading.Thread(target=run_flask, daemon=True).start()
-    threading.Thread(target=notification_listener, daemon=True).start()
+    t1 = threading.Thread(target=run_flask, daemon=True)
+    t1.start()
+
+    t2 = threading.Thread(target=notification_listener, daemon=True)
+    t2.start()
 
     time.sleep(2)
+    send_desktop_notification("SETTribe", f"System Ready on {MY_MACHINE_NAME}")
 
-    send_desktop_notification(
-        "SETTribe",
-        f"System Ready\nDevice: {MY_DEVICE_ID[:8]}"
-    )
-
-    webview.create_window(
-        "SETTribe AMS Portal",
-        AMS_URL,
-        width=1200,
-        height=800
-    )
-
-    webview.start()
+    webview.create_window("SETTribe AMS Portal", AMS_URL, width=1200, height=800)
+    webview.start(gui="edgechromium")
