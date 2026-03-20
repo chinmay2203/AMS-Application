@@ -26,25 +26,20 @@ def init_db():
     db.commit()
     db.close()
 
-# Auto run DB setup (IMPORTANT for deployment)
-@app.before_first_request
-def setup():
-    init_db()
+# ✅ IMPORTANT: CALL HERE (NOT decorator)
+init_db()
 
-# ================= API =================
+# ================= ROUTES =================
 
 @app.route("/")
 def home():
     return "Server Running ✅"
-
-# ---------------- SEND ----------------
 
 @app.route('/api/send_notification', methods=['POST'])
 def send_notification():
     try:
         data = request.get_json()
 
-        # ✅ JSON check
         if not data:
             return jsonify({"error": "Invalid JSON"}), 400
 
@@ -52,7 +47,6 @@ def send_notification():
         title = data.get("title")
         message = data.get("message")
 
-        # ✅ validation
         if not target or not title:
             return jsonify({"status": "invalid"}), 400
 
@@ -78,14 +72,11 @@ def send_notification():
         return jsonify({"error": str(e)}), 500
 
 
-# ---------------- GET ----------------
-
 @app.route('/api/get_notifications')
 def get_notifications():
     try:
         machine_id = request.args.get("machine_id")
 
-        # ✅ validation
         if not machine_id:
             return jsonify({"error": "machine_id required"}), 400
 
@@ -117,5 +108,4 @@ def get_notifications():
 # ================= RUN =================
 
 if __name__ == "__main__":
-    init_db()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
