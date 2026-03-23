@@ -7,9 +7,20 @@ import webview
 import time
 import uuid
 import requests
+import socket
 
-# ================= GLOBAL =================
-CURRENT_MACHINE_ID = None
+# ================= MACHINE NAME =================
+MY_MACHINE_NAME = socket.gethostname()
+print("Machine Name:", MY_MACHINE_NAME)
+
+# ================= WINDOWS FIX =================
+if os.name == "nt":
+    try:
+        import ctypes
+        myappid = 'settribe.ams.app'
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except Exception as e:
+        print("AppID Error:", e)
 
 # ================= CONFIG =================
 AMS_URL = "https://ams.settribe.com"
@@ -19,6 +30,7 @@ APP_NAME = "SETTribe"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_ICON = os.path.join(BASE_DIR, "settribe.ico")
 
+# ================= MEMORY STORAGE =================
 notifications_queue = []
 
 # ================= FLASK =================
@@ -32,21 +44,19 @@ def get_db():
 def init_db():
     db = get_db()
     cur = db.cursor()
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT,
-            password TEXT,
-            machine_id TEXT
+            password TEXT
         )
     """)
-
     db.commit()
     db.close()
 
 # ================= DESKTOP NOTIFICATION =================
 def send_desktop_notification(title, message):
+    print(f"Showing Notification: {title} - {message}")
     try:
         icon_path = APP_ICON if os.path.exists(APP_ICON) else None
         notification.notify(
@@ -87,6 +97,8 @@ def api_send():
         if len(notifications_queue) > 50:
             notifications_queue.pop(0)
 
+        print("Notification Queued:", new_event)
+
         return jsonify({"status": "queued"})
 
     return jsonify({"status": "invalid_data"}), 400
@@ -107,39 +119,27 @@ def api_get():
 # ================= LOGIN =================
 @app.route('/', methods=['GET', 'POST'])
 def login():
-    global CURRENT_MACHINE_ID
-
     if request.method == "POST":
         username = request.form['username']
         password = request.form['password']
-        machine_id = request.form.get('machine_id')
 
         db = get_db()
         cur = db.cursor()
-
         cur.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))
         user = cur.fetchone()
 
         if user:
-            # ✅ Save machine_id
-            cur.execute("UPDATE users SET machine_id=? WHERE username=?", (machine_id, username))
-            db.commit()
-
             session['user'] = username
-            session['machine_id'] = machine_id
-
-            CURRENT_MACHINE_ID = machine_id
-
             db.close()
 
-            # 🔔 Send notification ONLY to this machine
+            # 🔔 Send login notification
             try:
                 requests.post(
                     f"{SERVER_URL}/api/send_notification",
                     json={
-                        "target_machine": machine_id,
+                        "target_machine": MY_MACHINE_NAME,
                         "title": "Login Successful",
-                        "message": f"Hi {username}, welcome!"
+                        "message": f"Hi {username}, welcome to SETTribe!"
                     },
                     timeout=5
                 )
@@ -166,12 +166,8 @@ def notification_listener():
 
     while True:
         try:
-            if not CURRENT_MACHINE_ID:
-                time.sleep(2)
-                continue
-
             response = requests.get(
-                f"{SERVER_URL}/api/get_notifications?machine_id={CURRENT_MACHINE_ID}",
+                f"{SERVER_URL}/api/get_notifications?machine_id={MY_MACHINE_NAME}",
                 timeout=5
             )
 
@@ -208,7 +204,7 @@ if __name__ == "__main__":
 
     time.sleep(2)
 
-    send_desktop_notification("SETTribe", "System Ready")
+    send_desktop_notification("SETTribe", f"System Ready on {MY_MACHINE_NAME}")
 
     webview.create_window("SETTribe AMS Portal", AMS_URL, width=1200, height=800)
     webview.start(gui="edgechromium")
