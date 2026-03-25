@@ -44,13 +44,16 @@ def get_db():
 def init_db():
     db = get_db()
     cur = db.cursor()
+
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT,
-            password TEXT
+            password TEXT,
+            machine_id TEXT
         )
     """)
+
     db.commit()
     db.close()
 
@@ -125,19 +128,32 @@ def login():
 
         db = get_db()
         cur = db.cursor()
+
         cur.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))
         user = cur.fetchone()
 
         if user:
             session['user'] = username
+
+            # ✅ Save user's machine
+            cur.execute("UPDATE users SET machine_id=? WHERE username=?",
+                        (MY_MACHINE_NAME, username))
+            db.commit()
+
+            # ✅ Get machine id
+            cur.execute("SELECT machine_id FROM users WHERE username=?", (username,))
+            machine = cur.fetchone()
+
+            target_machine = machine[0] if machine else "ALL"
+
             db.close()
 
-            # 🔔 Send login notification
+            # 🔔 Send login notification to THAT user only
             try:
                 requests.post(
                     f"{SERVER_URL}/api/send_notification",
                     json={
-                        "target_machine": MY_MACHINE_NAME,
+                        "target_machine": target_machine,
                         "title": "Login Successful",
                         "message": f"Hi {username}, welcome to SETTribe!"
                     },
@@ -147,6 +163,7 @@ def login():
                 print("Send Error:", e)
 
             return redirect('/home')
+
         else:
             flash("Invalid Credentials")
             db.close()
