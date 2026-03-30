@@ -25,7 +25,6 @@ def get_unique_machine_id():
         with open(ID_FILE, "r") as f:
             return f.read().strip()
     else:
-        # नवीन आयडी तयार करा (उदा: ST-a1b2c3d4)
         new_id = f"ST-{str(uuid.uuid4())[:8]}"
         with open(ID_FILE, "w") as f:
             f.write(new_id)
@@ -107,7 +106,6 @@ def api_send():
         }
         notifications_queue.append(new_event)
         
-        # जास्तीत जास्त ५० मेसेज मेमरीमध्ये ठेवा
         if len(notifications_queue) > 50:
             notifications_queue.pop(0)
 
@@ -117,7 +115,6 @@ def api_send():
 @app.route('/api/get_notifications')
 def api_get():
     machine_id = request.args.get('machine_id')
-    # फक्त या मशीनसाठी किंवा 'ALL' साठी असलेले मेसेज फिल्टर करा
     my_notes = [
         n for n in notifications_queue
         if n['target_machine'] == machine_id or n['target_machine'] == "ALL"
@@ -140,13 +137,11 @@ def login():
         if user:
             session['user'] = username
 
-            # ✅ युनिक मशीन आयडी डेटाबेसमध्ये सेव्ह करा
             cur.execute("UPDATE users SET machine_id=? WHERE username=?",
                         (MY_MACHINE_ID, username))
             db.commit()
             db.close()
 
-            # 🔔 फक्त याच मशीनला लॉगिन नोटिफिकेशन पाठवा
             try:
                 requests.post(
                     f"{SERVER_URL}/api/send_notification",
@@ -180,7 +175,6 @@ def notification_listener():
 
     while True:
         try:
-            # सर्व्हरकडून या मशीनचे नोटिफिकेशन्स ओढा (Pull)
             response = requests.get(
                 f"{SERVER_URL}/api/get_notifications?machine_id={MY_MACHINE_ID}",
                 timeout=5
@@ -194,7 +188,7 @@ def notification_listener():
                         send_desktop_notification(note['title'], note['message'])
                         processed_ids.add(n_id)
         except Exception as e:
-            pass # नेट नसेल तर एरर प्रिंट टाळा किंवा लॉग करा
+            pass 
 
         time.sleep(5)
 
