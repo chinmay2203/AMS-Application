@@ -9,9 +9,32 @@ import uuid
 import requests
 import socket
 
-# ================= MACHINE NAME =================
-MY_MACHINE_NAME = socket.gethostname()
-print("Machine Name:", MY_MACHINE_NAME)
+# ================= CONFIG & PATHS =================
+AMS_URL = "https://ams.settribe.com"
+SERVER_URL = "https://ams-application.onrender.com"
+APP_NAME = "SETTribe"
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+APP_ICON = os.path.join(BASE_DIR, "settribe.ico")
+ID_FILE = os.path.join(BASE_DIR, "machine_id.txt")
+
+# ================= UNIQUE MACHINE ID LOGIC =================
+def get_unique_machine_id():
+    """प्रत्येक मशीनसाठी एक कायमस्वरूपी युनिक आयडी जनरेट किंवा रीड करतो."""
+    if os.path.exists(ID_FILE):
+        with open(ID_FILE, "r") as f:
+            return f.read().strip()
+    else:
+        # नवीन आयडी तयार करा (उदा: ST-a1b2c3d4)
+        new_id = f"ST-{str(uuid.uuid4())[:8]}"
+        with open(ID_FILE, "w") as f:
+            f.write(new_id)
+        return new_id
+
+MY_MACHINE_ID = get_unique_machine_id()
+print(f"--- SYSTEM READY ---")
+print(f"Machine ID: {MY_MACHINE_ID}")
+print(f"Hostname: {socket.gethostname()}")
 
 # ================= WINDOWS FIX =================
 if os.name == "nt":
@@ -21,14 +44,6 @@ if os.name == "nt":
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     except Exception as e:
         print("AppID Error:", e)
-
-# ================= CONFIG =================
-AMS_URL = "https://ams.settribe.com"
-SERVER_URL = "https://ams-application.onrender.com"
-APP_NAME = "SETTribe"
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_ICON = os.path.join(BASE_DIR, "settribe.ico")
 
 # ================= MEMORY STORAGE =================
 notifications_queue = []
@@ -44,7 +59,6 @@ def get_db():
 def init_db():
     db = get_db()
     cur = db.cursor()
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,7 +67,6 @@ def init_db():
             machine_id TEXT
         )
     """)
-
     db.commit()
     db.close()
 
@@ -74,11 +87,9 @@ def send_desktop_notification(title, message):
 
 # ================= API =================
 
-# 👉 SEND
 @app.route('/api/send_notification', methods=['POST'])
 def api_send():
     data = request.get_json()
-
     if not data:
         return jsonify({"status": "no data"}), 400
 
@@ -94,29 +105,23 @@ def api_send():
             "message": message,
             "timestamp": time.time()
         }
-
         notifications_queue.append(new_event)
-
+        
+        # जास्तीत जास्त ५० मेसेज मेमरीमध्ये ठेवा
         if len(notifications_queue) > 50:
             notifications_queue.pop(0)
 
-        print("Notification Queued:", new_event)
-
-        return jsonify({"status": "queued"})
-
+        return jsonify({"status": "queued", "machine_target": target})
     return jsonify({"status": "invalid_data"}), 400
 
-
-# 👉 GET
 @app.route('/api/get_notifications')
 def api_get():
     machine_id = request.args.get('machine_id')
-
+    # फक्त या मशीनसाठी किंवा 'ALL' साठी असलेले मेसेज फिल्टर करा
     my_notes = [
         n for n in notifications_queue
         if n['target_machine'] == machine_id or n['target_machine'] == "ALL"
     ]
-
     return jsonify(my_notes)
 
 # ================= LOGIN =================
@@ -135,41 +140,32 @@ def login():
         if user:
             session['user'] = username
 
-            # ✅ Save user's machine
+            # ✅ युनिक मशीन आयडी डेटाबेसमध्ये सेव्ह करा
             cur.execute("UPDATE users SET machine_id=? WHERE username=?",
-                        (MY_MACHINE_NAME, username))
+                        (MY_MACHINE_ID, username))
             db.commit()
-
-            # ✅ Get machine id
-            cur.execute("SELECT machine_id FROM users WHERE username=?", (username,))
-            machine = cur.fetchone()
-
-            target_machine = machine[0] if machine else "ALL"
-
             db.close()
 
-            # 🔔 Send login notification to THAT user only
+            # 🔔 फक्त याच मशीनला लॉगिन नोटिफिकेशन पाठवा
             try:
                 requests.post(
                     f"{SERVER_URL}/api/send_notification",
                     json={
-                        "target_machine": target_machine,
+                        "target_machine": MY_MACHINE_ID,
                         "title": "Login Successful",
-                        "message": f"Hi {username}, welcome to SETTribe!"
+                        "message": f"Hi {username}, welcome to SETTribe on {MY_MACHINE_ID}!"
                     },
                     timeout=5
                 )
             except Exception as e:
-                print("Send Error:", e)
+                print("API Send Error:", e)
 
             return redirect('/home')
-
         else:
             flash("Invalid Credentials")
             db.close()
 
     return render_template("login.html")
-
 
 @app.route('/home')
 def home():
@@ -180,26 +176,25 @@ def home():
 # ================= LISTENER =================
 def notification_listener():
     processed_ids = set()
+    print(f"Listener started for Machine ID: {MY_MACHINE_ID}")
 
     while True:
         try:
+            # सर्व्हरकडून या मशीनचे नोटिफिकेशन्स ओढा (Pull)
             response = requests.get(
-                f"{SERVER_URL}/api/get_notifications?machine_id={MY_MACHINE_NAME}",
+                f"{SERVER_URL}/api/get_notifications?machine_id={MY_MACHINE_ID}",
                 timeout=5
             )
 
             if response.status_code == 200:
                 server_notes = response.json()
-
                 for note in server_notes:
                     n_id = note.get("id")
-
                     if n_id not in processed_ids:
                         send_desktop_notification(note['title'], note['message'])
                         processed_ids.add(n_id)
-
         except Exception as e:
-            print("Sync Error:", e)
+            pass # नेट नसेल तर एरर प्रिंट टाळा किंवा लॉग करा
 
         time.sleep(5)
 
@@ -211,17 +206,14 @@ def run_flask():
 if __name__ == "__main__":
     init_db()
 
-    # Flask thread
-    t1 = threading.Thread(target=run_flask, daemon=True)
-    t1.start()
+    # Flask background thread
+    threading.Thread(target=run_flask, daemon=True).start()
 
-    # Listener thread
-    t2 = threading.Thread(target=notification_listener, daemon=True)
-    t2.start()
+    # Listener background thread
+    threading.Thread(target=notification_listener, daemon=True).start()
 
     time.sleep(2)
-
-    send_desktop_notification("SETTribe", f"System Ready on {MY_MACHINE_NAME}")
+    send_desktop_notification("SETTribe", f"ID: {MY_MACHINE_ID} is Online")
 
     webview.create_window("SETTribe AMS Portal", AMS_URL, width=1200, height=800)
     webview.start(gui="edgechromium")
