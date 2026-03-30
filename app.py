@@ -20,7 +20,6 @@ ID_FILE = os.path.join(BASE_DIR, "machine_id.txt")
 
 # ================= UNIQUE MACHINE ID LOGIC =================
 def get_unique_machine_id():
-    """प्रत्येक मशीनसाठी एक कायमस्वरूपी युनिक आयडी जनरेट किंवा रीड करतो."""
     if os.path.exists(ID_FILE):
         with open(ID_FILE, "r") as f:
             return f.read().strip()
