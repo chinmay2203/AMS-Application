@@ -19,15 +19,11 @@ APP_ICON = os.path.join(BASE_DIR, "settribe.ico")
 ID_FILE = os.path.join(BASE_DIR, "machine_id.txt")
 
 # ================= REMOTE POSTGRESQL CONFIG (RENDER) =================
-# खालील ठिकाणी तुमच्या Render डॅशबोर्डवरील सर्वात खालची "External Database URL" पेस्ट करा.
-# उदा. "postgres://settribe_db_user:zi7Q6A4IbbztiL1u9Ab6uDcmfAFFEbyg@dpg-.../settribe_db"
-# जर तुम्ही अ‍ॅप Render वर होस्ट करत असाल, तर Environment Variable मधून URL आपोआप घेतली जाईल.
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "येथे_तुमची_EXTERNAL_DATABASE_URL_पेस्ट_करा")
 
 def get_db_connection():
     try:
-        # Render च्या क्लाउड डेटाबेससाठी sslmode='require' असणे आवश्यक आहे
         conn = psycopg2.connect(DATABASE_URL, sslmode='require')
         return conn
     except Exception as e:
@@ -38,7 +34,6 @@ def init_db():
     conn = get_db_connection()
     if conn:
         cur = conn.cursor()
-        # टीप: जर एकाच PC वर अनेक युजर हवे असतील तर 'machine_id TEXT UNIQUE' मधील UNIQUE काढून टाका
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -131,12 +126,10 @@ def login():
 
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
-        # 1. युजर आधीपासून आहे का ते तपासा
         cur.execute("SELECT * FROM users WHERE username=%s", (username,))
         user = cur.fetchone()
 
         if user:
-            # जर युजर असेल, तर पासवर्ड तपासा आणि ID अपडेट करा
             if user['password'] == password:
                 session['user'] = username
                 cur.execute("UPDATE users SET machine_id=%s WHERE username=%s", (MY_MACHINE_ID, username))
@@ -147,7 +140,6 @@ def login():
                 conn.close()
                 return render_template("login.html")
         else:
-            # 2. जर युजर नसेल, तर नवीन युजर INSERT करा (Auto-Registration)
             cur.execute("INSERT INTO users (username, password, machine_id) VALUES (%s, %s, %s)", 
                         (username, password, MY_MACHINE_ID))
             conn.commit()
@@ -204,7 +196,6 @@ if __name__ == "__main__":
     
     time.sleep(2)
     
-    # Render वर होस्ट करताना मॉनिटर नसतो, त्यामुळे webview फक्त लोकल PC वर चालेल
     if not os.environ.get("RENDER"):
         send_desktop_notification("SETTribe", f"System Online | ID: {MY_MACHINE_ID}")
         # Desktop Window सुरू करा
