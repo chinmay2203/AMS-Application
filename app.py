@@ -3,24 +3,37 @@ from plyer import notification
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
+import sys
 import threading
 import webview
 import time
 import uuid
 import requests
 
-# ================= CONFIG & PATHS =================
+# ================= CONFIG & PATHS (.EXE FIX) =================
+# PyInstaller मधून रन होताना योग्य पाथ घेण्यासाठी
+if getattr(sys, 'frozen', False):
+    # .exe रन होत असलेला फोल्डर (येथे machine_id.txt सेव्ह होईल)
+    BASE_DIR = os.path.dirname(sys.executable)
+    # .exe च्या आतील temporary फोल्डर (येथे आयकॉन आणि templates असतील)
+    ASSET_DIR = sys._MEIPASS
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    ASSET_DIR = BASE_DIR
+
+APP_ICON = os.path.join(ASSET_DIR, "settribe.ico")
+ID_FILE = os.path.join(BASE_DIR, "machine_id.txt")
+
 AMS_URL = "http://127.0.0.1:5000/"
 SERVER_URL = "https://ams-application.onrender.com"
 APP_NAME = "SETTribe"
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_ICON = os.path.join(BASE_DIR, "settribe.ico")
-ID_FILE = os.path.join(BASE_DIR, "machine_id.txt")
-
 # ================= REMOTE POSTGRESQL CONFIG (RENDER) =================
-
-DATABASE_URL = os.environ.get("DATABASE_URL", "येथे_तुमची_EXTERNAL_DATABASE_URL_पेस्ट_करा")
+# तुमची Render वरील External Database URL
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL", 
+    "postgresql://settribe_db_user:zi7Q6A4IbbztiL1u9Ab6uDcmfAFfEbyg@dpg-d75q35h5pdvs73ae1ucg-a.oregon-postgres.render.com/settribe_db"
+)
 
 def get_db_connection():
     try:
@@ -73,7 +86,10 @@ if os.name == "nt":
 notifications_queue = []
 
 # ================= FLASK APP =================
-app = Flask(__name__)
+# .exe मधून रन होताना Flask ला templates कुठे आहेत हे सांगण्यासाठी
+app = Flask(__name__, 
+            template_folder=os.path.join(ASSET_DIR, 'templates'),
+            static_folder=os.path.join(ASSET_DIR, 'static') if os.path.exists(os.path.join(ASSET_DIR, 'static')) else None)
 app.secret_key = "settribe_secure_key_123"
 
 def send_desktop_notification(title, message):
@@ -125,7 +141,6 @@ def login():
             return render_template("login.html")
 
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        
         cur.execute("SELECT * FROM users WHERE username=%s", (username,))
         user = cur.fetchone()
 
@@ -144,7 +159,6 @@ def login():
                         (username, password, MY_MACHINE_ID))
             conn.commit()
             session['user'] = username
-            print(f"--- NEW USER SAVED: {username} with ID {MY_MACHINE_ID} ---")
 
         # Login Notification
         try:
@@ -184,22 +198,22 @@ def notification_listener():
 
 def run_flask():
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+    app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
 
 # ================= MAIN EXECUTION =================
 if __name__ == "__main__":
     init_db()
     
-    # Threads सुरू करा
-    threading.Thread(target=run_flask, daemon=True).start()
-    threading.Thread(target=notification_listener, daemon=True).start()
-    
-    time.sleep(2)
-    
+    # Render वर होस्ट करताना मॉनिटर नसतो, त्यामुळे webview तिथे उघडणार नाही
     if not os.environ.get("RENDER"):
+        threading.Thread(target=run_flask, daemon=True).start()
+        threading.Thread(target=notification_listener, daemon=True).start()
+        
+        time.sleep(2)
         send_desktop_notification("SETTribe", f"System Online | ID: {MY_MACHINE_ID}")
-        # Desktop Window सुरू करा
+        
         webview.create_window("SETTribe AMS Portal", AMS_URL, width=1200, height=800)
         webview.start(gui="edgechromium")
     else:
-        print("Running backend server on Render...")
+        # फक्त Render साठी
+        run_flask()

@@ -5,7 +5,7 @@ a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[('templates', 'templates')],
+    datas=[('settribe.ico', '.'), ('templates', 'templates')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
