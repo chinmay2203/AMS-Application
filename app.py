@@ -11,11 +11,8 @@ import uuid
 import requests
 
 # ================= CONFIG & PATHS (.EXE FIX) =================
-# PyInstaller मधून रन होताना योग्य पाथ घेण्यासाठी
 if getattr(sys, 'frozen', False):
-    # .exe रन होत असलेला फोल्डर (येथे machine_id.txt सेव्ह होईल)
     BASE_DIR = os.path.dirname(sys.executable)
-    # .exe च्या आतील temporary फोल्डर (येथे आयकॉन आणि templates असतील)
     ASSET_DIR = sys._MEIPASS
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -29,7 +26,6 @@ SERVER_URL = "https://ams-application.onrender.com"
 APP_NAME = "SETTribe"
 
 # ================= REMOTE POSTGRESQL CONFIG (RENDER) =================
-# तुमची Render वरील External Database URL
 DATABASE_URL = os.environ.get(
     "DATABASE_URL", 
     "postgresql://settribe_db_user:zi7Q6A4IbbztiL1u9Ab6uDcmfAFfEbyg@dpg-d75q35h5pdvs73ae1ucg-a.oregon-postgres.render.com/settribe_db"
@@ -86,7 +82,6 @@ if os.name == "nt":
 notifications_queue = []
 
 # ================= FLASK APP =================
-# .exe मधून रन होताना Flask ला templates कुठे आहेत हे सांगण्यासाठी
 app = Flask(__name__, 
             template_folder=os.path.join(ASSET_DIR, 'templates'),
             static_folder=os.path.join(ASSET_DIR, 'static') if os.path.exists(os.path.join(ASSET_DIR, 'static')) else None)
@@ -204,7 +199,6 @@ def run_flask():
 if __name__ == "__main__":
     init_db()
     
-    # Render वर होस्ट करताना मॉनिटर नसतो, त्यामुळे webview तिथे उघडणार नाही
     if not os.environ.get("RENDER"):
         threading.Thread(target=run_flask, daemon=True).start()
         threading.Thread(target=notification_listener, daemon=True).start()
@@ -215,5 +209,4 @@ if __name__ == "__main__":
         webview.create_window("SETTribe AMS Portal", AMS_URL, width=1200, height=800)
         webview.start(gui="edgechromium")
     else:
-        # फक्त Render साठी
         run_flask()
