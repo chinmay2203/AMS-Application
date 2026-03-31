@@ -1,16 +1,16 @@
 from flask import Flask, render_template, request, redirect, session, flash, jsonify
 from plyer import notification
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import os
 import threading
 import webview
 import time
 import uuid
 import requests
-import socket
 
 # ================= CONFIG & PATHS =================
-AMS_URL = "https://ams.settribe.com"
+AMS_URL = "http://127.0.0.1:5000/"
 SERVER_URL = "https://ams-application.onrender.com"
 APP_NAME = "SETTribe"
 
@@ -18,7 +18,41 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_ICON = os.path.join(BASE_DIR, "settribe.ico")
 ID_FILE = os.path.join(BASE_DIR, "machine_id.txt")
 
-# ================= UNIQUE MACHINE ID LOGIC =================
+# ================= REMOTE POSTGRESQL CONFIG (RENDER) =================
+# खालील ठिकाणी तुमच्या Render डॅशबोर्डवरील सर्वात खालची "External Database URL" पेस्ट करा.
+# उदा. "postgres://settribe_db_user:zi7Q6A4IbbztiL1u9Ab6uDcmfAFFEbyg@dpg-.../settribe_db"
+# जर तुम्ही अ‍ॅप Render वर होस्ट करत असाल, तर Environment Variable मधून URL आपोआप घेतली जाईल.
+
+DATABASE_URL = os.environ.get("DATABASE_URL", "येथे_तुमची_EXTERNAL_DATABASE_URL_पेस्ट_करा")
+
+def get_db_connection():
+    try:
+        # Render च्या क्लाउड डेटाबेससाठी sslmode='require' असणे आवश्यक आहे
+        conn = psycopg2.connect(DATABASE_URL, sslmode='require')
+        return conn
+    except Exception as e:
+        print(f"--- DATABASE CONNECTION ERROR --- \n{e}")
+        return None
+
+def init_db():
+    conn = get_db_connection()
+    if conn:
+        cur = conn.cursor()
+        # टीप: जर एकाच PC वर अनेक युजर हवे असतील तर 'machine_id TEXT UNIQUE' मधील UNIQUE काढून टाका
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username TEXT NOT NULL,
+                password TEXT NOT NULL,
+                machine_id TEXT
+            )
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("Database Initialized Successfully.")
+
+# ================= UNIQUE MACHINE ID =================
 def get_unique_machine_id():
     if os.path.exists(ID_FILE):
         with open(ID_FILE, "r") as f:
@@ -30,9 +64,6 @@ def get_unique_machine_id():
         return new_id
 
 MY_MACHINE_ID = get_unique_machine_id()
-print(f"--- SYSTEM READY ---")
-print(f"Machine ID: {MY_MACHINE_ID}")
-print(f"Hostname: {socket.gethostname()}")
 
 # ================= WINDOWS FIX =================
 if os.name == "nt":
@@ -43,34 +74,14 @@ if os.name == "nt":
     except Exception as e:
         print("AppID Error:", e)
 
-# ================= MEMORY STORAGE =================
+# ================= NOTIFICATIONS QUEUE =================
 notifications_queue = []
 
-# ================= FLASK =================
+# ================= FLASK APP =================
 app = Flask(__name__)
 app.secret_key = "settribe_secure_key_123"
 
-# ================= DB =================
-def get_db():
-    return sqlite3.connect("app.db")
-
-def init_db():
-    db = get_db()
-    cur = db.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS users(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT,
-            password TEXT,
-            machine_id TEXT
-        )
-    """)
-    db.commit()
-    db.close()
-
-# ================= DESKTOP NOTIFICATION =================
 def send_desktop_notification(title, message):
-    print(f"Showing Notification: {title} - {message}")
     try:
         icon_path = APP_ICON if os.path.exists(APP_ICON) else None
         notification.notify(
@@ -83,130 +94,121 @@ def send_desktop_notification(title, message):
     except Exception as e:
         print("Notification Error:", e)
 
-# ================= API =================
-
+# ================= API ROUTES =================
 @app.route('/api/send_notification', methods=['POST'])
 def api_send():
     data = request.get_json()
-    if not data:
-        return jsonify({"status": "no data"}), 400
+    if not data: return jsonify({"status": "no data"}), 400
 
-    title = data.get("title")
-    message = data.get("message")
-    target = data.get("target_machine", "ALL")
-
-    if title and message:
-        new_event = {
-            "id": str(uuid.uuid4()),
-            "target_machine": target,
-            "title": title,
-            "message": message,
-            "timestamp": time.time()
-        }
-        notifications_queue.append(new_event)
-        
-        if len(notifications_queue) > 50:
-            notifications_queue.pop(0)
-
-        return jsonify({"status": "queued", "machine_target": target})
-    return jsonify({"status": "invalid_data"}), 400
+    new_event = {
+        "id": str(uuid.uuid4()),
+        "target_machine": data.get("target_machine", "ALL"),
+        "title": data.get("title", "No Title"),
+        "message": data.get("message", "No Message"),
+        "timestamp": time.time()
+    }
+    notifications_queue.append(new_event)
+    if len(notifications_queue) > 50: notifications_queue.pop(0)
+    return jsonify({"status": "queued"})
 
 @app.route('/api/get_notifications')
 def api_get():
     machine_id = request.args.get('machine_id')
-    my_notes = [
-        n for n in notifications_queue
-        if n['target_machine'] == machine_id or n['target_machine'] == "ALL"
-    ]
+    my_notes = [n for n in notifications_queue if n['target_machine'] in [machine_id, "ALL"]]
     return jsonify(my_notes)
 
-# ================= LOGIN =================
+# ================= LOGIN & AUTO-SAVE LOGIC =================
 @app.route('/', methods=['GET', 'POST'])
 def login():
     if request.method == "POST":
         username = request.form['username']
         password = request.form['password']
 
-        db = get_db()
-        cur = db.cursor()
+        conn = get_db_connection()
+        if not conn:
+            flash("Database Connection Failed!")
+            return render_template("login.html")
 
-        cur.execute("SELECT * FROM users WHERE username=? AND password=?", (username, password))
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # 1. युजर आधीपासून आहे का ते तपासा
+        cur.execute("SELECT * FROM users WHERE username=%s", (username,))
         user = cur.fetchone()
 
         if user:
-            session['user'] = username
-
-            cur.execute("UPDATE users SET machine_id=? WHERE username=?",
-                        (MY_MACHINE_ID, username))
-            db.commit()
-            db.close()
-
-            try:
-                requests.post(
-                    f"{SERVER_URL}/api/send_notification",
-                    json={
-                        "target_machine": MY_MACHINE_ID,
-                        "title": "Login Successful",
-                        "message": f"Hi {username}, welcome to SETTribe on {MY_MACHINE_ID}!"
-                    },
-                    timeout=5
-                )
-            except Exception as e:
-                print("API Send Error:", e)
-
-            return redirect('/home')
+            # जर युजर असेल, तर पासवर्ड तपासा आणि ID अपडेट करा
+            if user['password'] == password:
+                session['user'] = username
+                cur.execute("UPDATE users SET machine_id=%s WHERE username=%s", (MY_MACHINE_ID, username))
+                conn.commit()
+            else:
+                flash("Invalid Password")
+                cur.close()
+                conn.close()
+                return render_template("login.html")
         else:
-            flash("Invalid Credentials")
-            db.close()
+            # 2. जर युजर नसेल, तर नवीन युजर INSERT करा (Auto-Registration)
+            cur.execute("INSERT INTO users (username, password, machine_id) VALUES (%s, %s, %s)", 
+                        (username, password, MY_MACHINE_ID))
+            conn.commit()
+            session['user'] = username
+            print(f"--- NEW USER SAVED: {username} with ID {MY_MACHINE_ID} ---")
+
+        # Login Notification
+        try:
+            requests.post(f"{SERVER_URL}/api/send_notification", json={
+                "target_machine": MY_MACHINE_ID,
+                "title": "Login Alert",
+                "message": f"Welcome {username}! Your Device is Registered."
+            }, timeout=3)
+        except: 
+            pass
+
+        cur.close()
+        conn.close()
+        return redirect('/home')
 
     return render_template("login.html")
 
 @app.route('/home')
 def home():
-    if 'user' not in session:
-        return redirect('/')
+    if 'user' not in session: return redirect('/')
     return render_template("index.html")
 
-# ================= LISTENER =================
+# ================= BACKGROUND THREADS =================
 def notification_listener():
     processed_ids = set()
-    print(f"Listener started for Machine ID: {MY_MACHINE_ID}")
-
     while True:
         try:
-            response = requests.get(
-                f"{SERVER_URL}/api/get_notifications?machine_id={MY_MACHINE_ID}",
-                timeout=5
-            )
-
+            response = requests.get(f"{SERVER_URL}/api/get_notifications?machine_id={MY_MACHINE_ID}", timeout=5)
             if response.status_code == 200:
-                server_notes = response.json()
-                for note in server_notes:
-                    n_id = note.get("id")
-                    if n_id not in processed_ids:
+                for note in response.json():
+                    if note['id'] not in processed_ids:
                         send_desktop_notification(note['title'], note['message'])
-                        processed_ids.add(n_id)
-        except Exception as e:
-            pass 
-
+                        processed_ids.add(note['id'])
+        except: 
+            pass
         time.sleep(5)
 
-# ================= RUN =================
 def run_flask():
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
+# ================= MAIN EXECUTION =================
 if __name__ == "__main__":
     init_db()
-
-    # Flask background thread
+    
+    # Threads सुरू करा
     threading.Thread(target=run_flask, daemon=True).start()
-
-    # Listener background thread
     threading.Thread(target=notification_listener, daemon=True).start()
-
+    
     time.sleep(2)
-    send_desktop_notification("SETTribe", f"ID: {MY_MACHINE_ID} is Online")
-
-    webview.create_window("SETTribe AMS Portal", AMS_URL, width=1200, height=800)
-    webview.start(gui="edgechromium")
+    
+    # Render वर होस्ट करताना मॉनिटर नसतो, त्यामुळे webview फक्त लोकल PC वर चालेल
+    if not os.environ.get("RENDER"):
+        send_desktop_notification("SETTribe", f"System Online | ID: {MY_MACHINE_ID}")
+        # Desktop Window सुरू करा
+        webview.create_window("SETTribe AMS Portal", AMS_URL, width=1200, height=800)
+        webview.start(gui="edgechromium")
+    else:
+        print("Running backend server on Render...")
