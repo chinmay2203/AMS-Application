@@ -155,8 +155,7 @@ def login():
             conn.commit()
             session['user'] = username
 
-        # ================= इथे बदल केला आहे =================
-        # Login Notification - आता हे "ALL" मशीन्सना जाईल
+
         try:
             requests.post(f"{SERVER_URL}/api/send_notification", json={
                 "target_machine": "ALL", 
