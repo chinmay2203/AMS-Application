@@ -182,10 +182,11 @@ def broadcast():
     if request.method == 'POST':
         title = request.form.get('title')
         message = request.form.get('message')
+        target = request.form.get('target')
         
         try:
             requests.post(f"{SERVER_URL}/api/send_notification", json={
-                "target_machine": "ALL",
+                "target_machine": target,
                 "title": title,
                 "message": message
             }, timeout=3)
