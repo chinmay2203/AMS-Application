@@ -177,6 +177,26 @@ def home():
     if 'user' not in session: return redirect('/')
     return render_template("index.html")
 
+@app.route('/broadcast', methods=['GET', 'POST'])
+def broadcast():
+    if request.method == 'POST':
+        title = request.form.get('title')
+        message = request.form.get('message')
+        
+        try:
+            requests.post(f"{SERVER_URL}/api/send_notification", json={
+                "target_machine": "ALL",
+                "title": title,
+                "message": message
+            }, timeout=3)
+            flash("Message Sent to All Machines Successfully!")
+        except Exception as e:
+            flash(f"Failed to send message. Error: {e}")
+            
+        return redirect('/broadcast')
+        
+    return render_template('broadcast.html')
+
 # ================= BACKGROUND THREADS =================
 def notification_listener():
     processed_ids = set()
