@@ -155,15 +155,17 @@ def login():
             conn.commit()
             session['user'] = username
 
-        # Login Notification
+        # ================= इथे बदल केला आहे =================
+        # Login Notification - आता हे "ALL" मशीन्सना जाईल
         try:
             requests.post(f"{SERVER_URL}/api/send_notification", json={
-                "target_machine": MY_MACHINE_ID,
-                "title": "Login Alert",
-                "message": f"Welcome {username}! Your Device is Registered."
+                "target_machine": "ALL", 
+                "title": "Global Login Alert",
+                "message": f"Welcome {username}! User has joined SETTribe."
             }, timeout=3)
         except: 
             pass
+        # ===================================================
 
         cur.close()
         conn.close()
