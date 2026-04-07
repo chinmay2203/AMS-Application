@@ -180,22 +180,30 @@ def home():
 @app.route('/broadcast', methods=['GET', 'POST'])
 def broadcast():
     if request.method == 'POST':
-        title = request.form.get('title')
-        message = request.form.get('message')
-        target = request.form.get('target')
-        
+        target = request.form.get('target', 'ALL')  
+        title = request.form.get('title', 'Hello')
+        message = request.form.get('message', 'Welcome to Settribe Application')
+
+
         try:
             requests.post(f"{SERVER_URL}/api/send_notification", json={
-                "target_machine": target,
+                "target_machine": target, 
                 "title": title,
                 "message": message
-            }, timeout=3)
-            flash("Message Sent to All Machines Successfully!")
+            }, timeout=5)
         except Exception as e:
-            flash(f"Failed to send message. Error: {e}")
-            
-        return redirect('/broadcast')
-        
+
+            return jsonify({
+                "status": "error", 
+                "message": f"Server error: {e}"
+            }), 500
+
+
+        return jsonify({
+            "status": "success", 
+            "message": f"Notification '{title}' sent successfully!"
+        }), 200
+    
     return render_template('broadcast.html')
 
 # ================= BACKGROUND THREADS =================
