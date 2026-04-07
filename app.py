@@ -21,7 +21,7 @@ else:
 APP_ICON = os.path.join(ASSET_DIR, "settribe.ico")
 ID_FILE = os.path.join(BASE_DIR, "machine_id.txt")
 
-AMS_URL = "http://127.0.0.1:5000/"
+AMS_URL = "https://dev.settribeitsolutions.com/Dev/SETTribe_AMS/pages/login.php?DesktopToken="
 SERVER_URL = "https://ams-application.onrender.com"
 APP_NAME = "SETTribe"
 
@@ -236,7 +236,7 @@ if __name__ == "__main__":
         time.sleep(2)
         send_desktop_notification("SETTribe", f"System Online | ID: {MY_MACHINE_ID}")
         
-        webview.create_window("SETTribe AMS Portal", AMS_URL, width=1200, height=800)
+        webview.create_window("SETTribe AMS Portal", AMS_URL+MY_MACHINE_ID, width=1200, height=800)
         webview.start(gui="edgechromium")
     else:
         run_flask()
