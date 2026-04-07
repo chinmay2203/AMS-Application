@@ -190,7 +190,7 @@ def broadcast():
                 "target_machine": target, 
                 "title": title,
                 "message": message
-            }, timeout=5)
+            }, timeout=40)
         except Exception as e:
 
             return jsonify({
